@@ -5,14 +5,17 @@
 #  - Requires the following programs be executable from any location (i.e. in the PATH):
 #        python, Fold, partition, ProbabilityPlot
 #  - Take a look at the README for other required modules, installation, and execution help.
-#  - Public release 1.0
+#  - Public release 1.2
 #  - Copyright Greggory M Rice 2014
+#           Copyright for Shapemapper 2.2 DMS compatibility David Mitchell III 2023
 
 #  - Update: Sep 30, 2020: Addressed issues with SHAPE reactivity not displaying on Shannon entropy plot.
 #			Altered the Shannon Entropy plot to display Shannon and SHAPE on separate y axes.
 #			Fixed np.nan issue with SHAPE plotting.
 #			-999 values no longer counted as low SHAPE when determining low SHAPE/low Shannon regions
 #			Fixed issue with beginning of sequence being incorrectly included in low SHAPE/low Shannon region
+#
+#  - Update: Jul 25, 2023: Added compatibility with DMS functionality in Shapemapper 2.2
 ##################################################################################
 # GPL statement:
 # This file is part of Shapemapper.
@@ -30,9 +33,9 @@
 # You should have received a copy of the GNU General Public License
 # along with SuperFold.  If not, see <http://www.gnu.org/licenses/>.
 
-# 17 Nov 2014
+# 25 July 2023
 # all rights reserved
-# 1.0 build
+# 1.2 build
 ##################################################################################
 import batchSubmit as batch
 import argparse, sys, shlex, os, subprocess, hashlib, time
@@ -114,23 +117,28 @@ def main():
     
     
     # set the results directory
-    resultsDir = "results_"+args.safeName
-    
-    print resultsDir
+    currDir = os.getcwd()
+    resultsFile = 'results_' + args.safeName
+    resultsDir = currDir + '/results'
+
+    print 'Current Directory:', os.getcwd()
+    print 'Results Directory:', resultsDir
+    print 'Results Log File:', resultsFile
+
     try:
         os.mkdir(resultsDir)
     except:
         pass
-    
+
     try:
         os.mkdir(resultsDir+"/regions/")
     except:
         pass
-    
+
     # set location of the logfile
-    logFile = open("{0}/log_{0}.txt".format(resultsDir),"a")
+    logFile = open("{0}/log_{1}.txt".format(resultsDir,resultsFile),"a")
     sys.stdout = logFile
-    print >> sys.stderr, "log file location: {0}/log_{0}.txt".format(resultsDir)
+    print >> sys.stderr, "log file location: {0}/log_{1}.txt".format(resultsDir,resultsFile)
     
     print "\n"*3,"#"*51
     print """#    _____                     ______    _     _  #
@@ -142,7 +150,8 @@ def main():
 #              | |                                #
 #              |_|                                #"""                             
     print "#{0: ^49}#".format( "" )
-    print "#{0: ^49}#".format( "Superfold ver. Alpha_22-Sept-2014" )
+    print "#{0: ^49}#".format( "Superfold ver. 1.2 - 21 July 2023" )
+    print "#{0: ^49}#".format( "Includes Compatibility for DMS Output from Shapemapper 2.2" )
     print "#{0: ^49}#".format( "" )
     print "#{0: ^49}#".format("starting job: " + args.safeName)
     print "#{0: ^49}#".format( time.strftime("%c") )
@@ -156,7 +165,7 @@ def main():
     partitionPairing = dotPlot()
     
     if not debug:
-        partitionPairing = generateAndRunPartition(args.mapObj, args.allConstraints,args.partitionWindowSize, args.partitionStepSize, args.safeName, args.SHAPEslope, args.SHAPEintercept, args.np, args.maxPairingDist)
+        partitionPairing = generateAndRunPartition(args.mapObj, args.DMS, args.allConstraints,args.partitionWindowSize, args.partitionStepSize, args.safeName, args.SHAPEslope, args.SHAPEintercept, args.np, args.maxPairingDist)
     
     # write the partition function file
     partitionFileName="{0}/merged_{1}.dp".format(resultsDir, args.safeName)
@@ -191,7 +200,7 @@ def main():
     
     initialStructure = CT()
     if not debug:
-        initialStructure = generateAndRunFold(args.mapObj, args.allConstraints,dsConstraint, args.foldWindowSize, args.foldStepSize, args.safeName,args.SHAPEslope,args.SHAPEintercept,args.np, args.maxPairingDist)
+        initialStructure = generateAndRunFold(args.mapObj, args.DMS, args.allConstraints,dsConstraint, args.foldWindowSize, args.foldStepSize, args.safeName,args.SHAPEslope,args.SHAPEintercept,args.np, args.maxPairingDist)
     
     # write the folded structure
     initialStructureFileName = "{0}/merged_{1}.ct".format(resultsDir, args.safeName)
@@ -348,7 +357,7 @@ def ensembleRNA_splitPlot(dpObj, ctObj, pk=None, outFile="arcs.pdf"):
     arcplot(outPath=outFile, pairedNucArr=nucArr, arcColors=colors,seq=y.seq, alpha=alpha, maxDistance=None)
 
 
-def generateAndRunFold(mapObj, constraints, dsConstraints, windowSize, stepSize, prefix, shapeSlope, shapeIntercept, nprocs, maxDist):
+def generateAndRunFold(mapObj, usedms, constraints, dsConstraints, windowSize, stepSize, prefix, shapeSlope, shapeIntercept, nprocs, maxDist):
     
     
     #make list of commands, skip those files that have already been calculated
@@ -356,6 +365,8 @@ def generateAndRunFold(mapObj, constraints, dsConstraints, windowSize, stepSize,
     # run master model, return structure
     rnaLength = len(mapObj.seq)
     #print rnaLength
+    
+    print 'Using DMS option for Fold?:', usedms, '\n'
     
     # make the directory if it doesn't exist
     dirname = "fold_" + prefix
@@ -374,8 +385,14 @@ def generateAndRunFold(mapObj, constraints, dsConstraints, windowSize, stepSize,
         fname = "{0}/{1}_{2}_{3}".format(dirname,prefix,cut_i,cut_j)
         genFiles(mapObj,constraints,dsConstraints,cut_i,cut_j,fname)
         
-        foldCMD = "Fold {0}.seq {0}.ct -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const -m 100 -w 0".format(fname, shapeSlope,shapeIntercept, maxDist)
-        
+        # New DMS command #
+        if usedms == True:
+            foldCMD = "Fold {0}.seq {0}.ct -dmsnt {0}.shape -md {1} -C {0}.const -m 100 -w 0".format(fname, maxDist)
+
+        # Original SHAPE command #
+        elif usedms == False:
+            foldCMD = "Fold {0}.seq {0}.ct -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const -m 100 -w 0".format(fname, shapeSlope,shapeIntercept, maxDist)
+
         jobQueue1.append(shlex.split(foldCMD))
     
     else:
@@ -387,8 +404,14 @@ def generateAndRunFold(mapObj, constraints, dsConstraints, windowSize, stepSize,
             fname = "{0}/{1}_{2}_{3}".format(dirname,prefix,cut_i,cut_j)
             genFiles(mapObj,constraints,dsConstraints,cut_i,cut_j,fname)
             
-            foldCMD = "Fold {0}.seq {0}.ct -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const -m 100 -w 0".format(fname, shapeSlope,shapeIntercept, maxDist)
-            
+            # New DMS command #
+            if usedms == True:
+                foldCMD = "Fold {0}.seq {0}.ct -dmsnt {0}.shape -md {1} -C {0}.const -m 100 -w 0".format(fname, maxDist)
+
+            # Original SHAPE command #
+            elif usedms == False:
+                foldCMD = "Fold {0}.seq {0}.ct -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const -m 100 -w 0".format(fname, shapeSlope,shapeIntercept, maxDist)
+
             jobQueue1.append(shlex.split(foldCMD))
         
         # 5prime folds
@@ -398,7 +421,13 @@ def generateAndRunFold(mapObj, constraints, dsConstraints, windowSize, stepSize,
             fname = "{0}/{1}_{2}_{3}".format(dirname,prefix,1,cut5prime_j)
             genFiles(mapObj,constraints,dsConstraints,1,cut5prime_j,fname)
             
-            foldCMD = "Fold {0}.seq {0}.ct -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const -m 100 -w 0".format(fname, shapeSlope,shapeIntercept, maxDist)
+            # New DMS command #
+            if usedms == True:
+                foldCMD = "Fold {0}.seq {0}.ct -dmsnt {0}.shape -md {1} -C {0}.const -m 100 -w 0".format(fname, maxDist)
+
+            # Original SHAPE command #
+            elif usedms == False:
+                foldCMD = "Fold {0}.seq {0}.ct -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const -m 100 -w 0".format(fname, shapeSlope,shapeIntercept, maxDist)
             
             jobQueue1.append(shlex.split(foldCMD))
             
@@ -406,7 +435,13 @@ def generateAndRunFold(mapObj, constraints, dsConstraints, windowSize, stepSize,
             fname = "{0}/{1}_{2}_{3}".format(dirname,prefix,cut3prime_i,rnaLength)
             genFiles(mapObj,constraints,dsConstraints,cut3prime_i,rnaLength,fname)
             
-            foldCMD = "Fold {0}.seq {0}.ct -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const -m 100 -w 0".format(fname, shapeSlope,shapeIntercept, maxDist)
+            # New DMS command #
+            if usedms == True:
+                foldCMD = "Fold {0}.seq {0}.ct -dmsnt {0}.shape -md {1} -C {0}.const -m 100 -w 0".format(fname, maxDist)
+
+            # Original SHAPE command #
+            elif usedms == False:
+                foldCMD = "Fold {0}.seq {0}.ct -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const -m 100 -w 0".format(fname, shapeSlope,shapeIntercept, maxDist)
             
             jobQueue1.append(shlex.split(foldCMD))
         
@@ -433,7 +468,7 @@ def generateAndRunFold(mapObj, constraints, dsConstraints, windowSize, stepSize,
     return masterModelStructure
     
 
-def generateAndRunPartition(mapObj, constraints, windowSize, stepSize, prefix, shapeSlope, shapeIntercept, nprocs, maxDist):
+def generateAndRunPartition(mapObj, usedms, constraints, windowSize, stepSize, prefix, shapeSlope, shapeIntercept, nprocs, maxDist):
     
     #make list of commands, skip those files that have already been calculated
     #run partition function
@@ -443,6 +478,8 @@ def generateAndRunPartition(mapObj, constraints, windowSize, stepSize, prefix, s
     
     rnaLength = len(mapObj.seq)
     #print rnaLength
+    
+    print 'Using DMS mode for Partition?:', usedms, '\n'
     
     # make the directory if it doesn't exist
     dirname = "partition_" + prefix
@@ -466,7 +503,13 @@ def generateAndRunPartition(mapObj, constraints, windowSize, stepSize, prefix, s
         fname = "{0}/{1}_{2}_{3}".format(dirname,prefix,cut_i,cut_j)
         genFiles(mapObj,constraints,{0:[],1:[]},cut_i,cut_j,fname)
         
-        foldCMD = "partition {0}.seq {0}.pfs -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const".format(fname, shapeSlope,shapeIntercept, maxDist)
+        # New DMS mode #
+        if usedms == True:
+            foldCMD = "partition {0}.seq {0}.pfs -dmsnt {0}.shape -md {1} -C {0}.const".format(fname, maxDist)
+
+        # Original SHAPE mode #
+        elif usedms == False:
+            foldCMD = "partition {0}.seq {0}.pfs -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const".format(fname, shapeSlope,shapeIntercept, maxDist)
         
         parseFold = "ProbabilityPlot {0}.pfs {0}.dp -t".format(fname)
         jobQueue1.append(shlex.split(foldCMD))
@@ -483,7 +526,13 @@ def generateAndRunPartition(mapObj, constraints, windowSize, stepSize, prefix, s
             fname = "{0}/{1}_{2}_{3}".format(dirname,prefix,cut_i,cut_j)
             genFiles(mapObj,constraints,{0:[],1:[]},cut_i,cut_j,fname)
             
-            foldCMD = "partition {0}.seq {0}.pfs -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const".format(fname, shapeSlope,shapeIntercept, maxDist)
+            # New DMS mode #
+            if usedms == True:
+                foldCMD = "partition {0}.seq {0}.pfs -dmsnt {0}.shape -md {1} -C {0}.const".format(fname, maxDist)
+
+            # Original SHAPE mode #
+            elif usedms == False:
+                foldCMD = "partition {0}.seq {0}.pfs -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const".format(fname, shapeSlope,shapeIntercept, maxDist)
             
             parseFold = "ProbabilityPlot {0}.pfs {0}.dp -t".format(fname)
             jobQueue1.append(shlex.split(foldCMD))
@@ -499,7 +548,14 @@ def generateAndRunPartition(mapObj, constraints, windowSize, stepSize, prefix, s
             fname = "{0}/{1}_{2}_{3}".format(dirname,prefix,1,cut5prime_j)
             genFiles(mapObj,constraints,{0:[],1:[]},1,cut5prime_j,fname)
             
-            foldCMD = "partition {0}.seq {0}.pfs -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const".format(fname, shapeSlope,shapeIntercept, maxDist)
+            # New DMS mode #
+            if usedms == True:
+                foldCMD = "partition {0}.seq {0}.pfs -dmsnt {0}.shape -md {1} -C {0}.const".format(fname, maxDist)
+
+            # Original SHAPE mode #
+            elif usedms == False:
+                foldCMD = "partition {0}.seq {0}.pfs -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const".format(fname, shapeSlope,shapeIntercept, maxDist)
+
             parseFold = "ProbabilityPlot {0}.pfs {0}.dp -t".format(fname)
             
             jobQueue1.append(shlex.split(foldCMD))
@@ -512,7 +568,14 @@ def generateAndRunPartition(mapObj, constraints, windowSize, stepSize, prefix, s
             fname = "{0}/{1}_{2}_{3}".format(dirname,prefix,cut3prime_i,rnaLength)
             genFiles(mapObj,constraints,{0:[],1:[]},cut3prime_i,rnaLength,fname)
             
-            foldCMD = "partition {0}.seq {0}.pfs -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const".format(fname, shapeSlope,shapeIntercept, maxDist)
+            # New DMS mode #
+            if usedms ==  True:
+                foldCMD = "partition {0}.seq {0}.pfs -dmsnt {0}.shape -md {1} -C {0}.const".format(fname, maxDist)
+
+            # Original SHAPE mode #
+            elif usedms == False:
+                foldCMD = "partition {0}.seq {0}.pfs -sh {0}.shape -sm {1} -si {2} -md {3} -C {0}.const".format(fname, shapeSlope,shapeIntercept, maxDist)
+
             parseFold = "ProbabilityPlot {0}.pfs {0}.dp -t".format(fname)
             
             jobQueue1.append(shlex.split(foldCMD))
@@ -654,6 +717,7 @@ def parseArgs():
 
     arg = argparse.ArgumentParser(description="SuperFold takes a windowing approach to break up the folding of large RNAs. Dividing the folding of a large RNA into smaller segments allows modern multi-core workstations to model RNA structures in a modest amount of clock-time. See README file for further details and file descriptions", epilog="SuperFold v1.0 by Gregg Rice ( gmr@unc.edu )")
     arg.add_argument('mapFile', type=str, help='SHAPE-MaP .map file, trimmed to fold desired sequence')
+    arg.add_argument('--DMS', action='store_true', default=False, help='Using DMS probing data generated by ShapeMapper 2.2 with --dms flag')
     arg.add_argument('--ssRegion', type=str, help='file containing forced single stranded regions')
     arg.add_argument('--pkRegion', type=str, help='text file containing pseudoknotted basepairs:\npaired nucleotides on each line seperated by whitespace. e.g.\n\n1 50(newline)2 49(newline)...')
     arg.add_argument('--np', type=int, default=2, help='number of processors to use, default:2')
@@ -738,6 +802,7 @@ def parseArgs():
     # by hashing the names of the input values, changing any input will make a new hash
     m = hashlib.md5()
     m.update(str(o.mapFile))
+    m.update(str(o.DMS))
     m.update(str(o.ssRegion))
     m.update(str(o.pkRegion))
     m.update(str(o.differentialFile))
@@ -1217,9 +1282,10 @@ def mainShannonFunc(shapeReact, shannonEntropy, saveName, ctStruct):
 		dataIn[dataIn<-500] = np.nan
 		# window = 2*degree + 1
 		for i in range(degree, len(dataIn)-degree):
-			#### v1.1 update, medians now calculated with nanmedian not median
-			out[i] = np.nanmedian(dataIn[i-degree:i+degree+1])
-	
+			sele = dataIn[i-degree:i+degree+1]
+			mask = np.isfinite(sele)
+			out[i] = np.median(sele[mask])
+
 		# pad the 5' end
 		for i in range(0,degree):
 			out[i] = float(out[degree])
@@ -1238,7 +1304,8 @@ def mainShannonFunc(shapeReact, shannonEntropy, saveName, ctStruct):
 	shape = movingWindow(shapeUnscaled, 25)
 	shannon = movingWindow(shannonUnscaled, 25)
 
-	shapeTrans = findTransitions(shape,np.nanmedian(shape)/1)
+	mask2 = np.isfinite(shape)
+	shapeTrans = findTransitions(shape,np.median(shape[mask2])/1)
 	#shapeTrans = findTransitions(shape,0.25)
 	#shannonTrans = findTransitions(shannon,np.median(shannon)*1)
 	shannonTrans = findTransitions(shannon,np.median(shannon))
@@ -1323,7 +1390,7 @@ def mainShannonFunc(shapeReact, shannonEntropy, saveName, ctStruct):
 	#twin the x axis
 	ax2 = ax.twinx()
 	#plot the shape reactivity above the shannon
-	shape_med = np.nanmedian(shape)
+	shape_med = np.median(shape[mask2])
 	#### V1.1 Update
 	#overwrite all np.nan values with median
 	#this prevent errors in the plotting

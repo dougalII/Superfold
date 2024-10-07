@@ -114,6 +114,13 @@ reassemble your pk'd nucleotides in the final step. ex:
 35 77
 36 76
 
+ShapeMapper 2.2+ and --dms:
+
+If the data was generated with ShapeMapper 2.2+ in DMS mode (--dms)
+Superfold should be run with the --DMS flag. This will modify the
+submitted fold and partition commands in a manner compatible with
+DMS SM 2.2+ data.
+
 ###################################################################################
 Output description and troubleshooting:
 
